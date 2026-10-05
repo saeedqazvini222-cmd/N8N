@@ -1,0 +1,818 @@
+{
+  "name": "Supplier Prices — Login, Scrape & Data Table Sync",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 2 * * *"
+            }
+          ]
+        }
+      },
+      "id": "a1f4bc1e-5f31-47d2-a965-000000000001",
+      "name": "Daily 02:00 Schedule (editable)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -1560,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "login-url",
+              "name": "LOGIN_URL",
+              "value": "={{ $env.LOGIN_URL }}",
+              "type": "string"
+            },
+            {
+              "id": "otp-request-url",
+              "name": "OTP_REQUEST_URL",
+              "value": "={{ $env.OTP_REQUEST_URL || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "otp-verify-url",
+              "name": "OTP_VERIFY_URL",
+              "value": "={{ $env.OTP_VERIFY_URL || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "mobile",
+              "name": "MOBILE_NUMBER",
+              "value": "={{ $env.MOBILE_NUMBER }}",
+              "type": "string"
+            },
+            {
+              "id": "mobile-field",
+              "name": "MOBILE_FIELD_NAME",
+              "value": "={{ $env.MOBILE_FIELD_NAME || 'mobile' }}",
+              "type": "string"
+            },
+            {
+              "id": "otp-field",
+              "name": "OTP_FIELD_NAME",
+              "value": "={{ $env.OTP_FIELD_NAME || 'otp' }}",
+              "type": "string"
+            },
+            {
+              "id": "supplier",
+              "name": "SUPPLIER_NAME",
+              "value": "={{ $env.SUPPLIER_NAME || 'supplier' }}",
+              "type": "string"
+            },
+            {
+              "id": "max-pages",
+              "name": "MAX_PAGES",
+              "value": "={{ Number($env.MAX_PAGES || 100) }}",
+              "type": "number"
+            },
+            {
+              "id": "otp-sent-marker",
+              "name": "OTP_SENT_MARKER",
+              "value": "={{ $env.OTP_SENT_MARKER || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "session-cookie",
+              "name": "SESSION_COOKIE",
+              "value": "={{ $env.SESSION_COOKIE || '' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a1f4bc1e-5f31-47d2-a965-000000000002",
+      "name": "Configuration (environment variables)",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -1340,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.LOGIN_URL }}",
+        "options": {
+          "redirect": {
+            "followRedirects": true
+          }
+        }
+      },
+      "id": "a1f4bc1e-5f31-47d2-a965-000000000003",
+      "name": "GET Login Page (CSRF + cookies)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1110,
+        140
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// OTP-only pages can have no CSRF token or cookie; both remain optional.\n// If OTP_REQUEST_URL is not configured, use the first login form action discovered on the page.\nconst html = String($json.body ?? $json.data ?? JSON.stringify($json));\nconst cfg = $('Configuration (environment variables)').first().json;\nconst form = html.match(/<form\\b([^>]*)>/i);\nconst action = form?.[1]?.match(/\\baction=[\\\"']([^\\\"']*)/i)?.[1] ?? '';\nconst inputNames = [...html.matchAll(/<input\\b[^>]*\\bname=[\\\"']([^\\\"']+)[\\\"'][^>]*>/gi)].map(m => m[1]);\nconst mobileField = inputNames.find(name => /(mobile|phone|tel|cell|username)/i.test(name)) ?? cfg.MOBILE_FIELD_NAME;\nconst csrf = html.match(/<input[^>]+name=[\\\"'](?:_token|csrf(?:_token)?)[\\\"'][^>]+value=[\\\"']([^\\\"']+)/i)?.[1] ?? '';\nconst headers = $json.headers ?? {};\nconst setCookie = headers['set-cookie'] ?? headers['Set-Cookie'] ?? [];\nconst sessionCookie = (Array.isArray(setCookie) ? setCookie : [setCookie]).map(c => String(c).split(';')[0]).filter(Boolean).join('; ');\nconst otpRequestUrl = cfg.OTP_REQUEST_URL || (action ? new URL(action, cfg.LOGIN_URL).href : '');\nif (!otpRequestUrl) throw new Error('OTP_REQUEST_URL is required: no form action was found on LOGIN_URL');\nreturn [{ json: { ...cfg, OTP_REQUEST_URL: otpRequestUrl, MOBILE_FIELD_NAME: mobileField, csrf, sessionCookie } }];"
+      },
+      "id": "a1f4bc1e-5f31-47d2-a965-000000000004",
+      "name": "Extract Optional CSRF and Session Cookie",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -880,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.OTP_REQUEST_URL }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Cookie",
+              "value": "={{ $json.sessionCookie }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/x-www-form-urlencoded"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "={{ $json.MOBILE_FIELD_NAME }}",
+              "value": "={{ $json.MOBILE_NUMBER }}"
+            },
+            {
+              "name": "_token",
+              "value": "={{ $json.csrf }}"
+            }
+          ]
+        },
+        "options": {
+          "redirect": {
+            "followRedirects": true
+          }
+        }
+      },
+      "id": "a1f4bc1e-5f31-47d2-a965-000000000005",
+      "name": "POST Request OTP (mobile number)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -640,
+        140
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// A 200 response only proves that the HTTP request was accepted; it does NOT prove an SMS was sent.\n// Set OTP_SENT_MARKER to an exact success message/code from the supplier response (for example: \"کد تایید ارسال شد\").\nconst html = String($json.body ?? $json.data ?? JSON.stringify($json));\nconst previous = $('Extract Optional CSRF and Session Cookie').first().json;\nconst failed = /invalid (mobile|phone|number)|too many requests|not registered|rate limit|شماره.*(?:نامعتبر|اشتباه)|خطا در ارسال/i.test(html);\nconst marker = String(previous.OTP_SENT_MARKER ?? '').trim();\nif (failed || (marker && !html.toLowerCase().includes(marker.toLowerCase()))) {\n  return [{ json: { ok: false, reason: marker && !html.toLowerCase().includes(marker.toLowerCase()) ? 'Supplier did not return OTP_SENT_MARKER. The request endpoint or payload is likely incorrect.' : 'OTP request was rejected. Verify OTP_REQUEST_URL, MOBILE_FIELD_NAME, and MOBILE_NUMBER.' } }];\n}\nconst form = html.match(/<form\\b([^>]*)>/i);\nconst action = form?.[1]?.match(/\\baction=[\\\"']([^\\\"']*)/i)?.[1] ?? '';\nconst inputNames = [...html.matchAll(/<input\\b[^>]*\\bname=[\\\"']([^\\\"']+)[\\\"'][^>]*>/gi)].map(m => m[1]);\nconst otpField = inputNames.find(name => /(?:otp|verification|confirm|code|token)/i.test(name)) ?? previous.OTP_FIELD_NAME;\nconst otpVerifyUrl = previous.OTP_VERIFY_URL || (action ? new URL(action, previous.OTP_REQUEST_URL).href : '');\nif (!otpVerifyUrl) return [{ json: { ok: false, reason: 'OTP request completed, but OTP_VERIFY_URL could not be detected. Set OTP_VERIFY_URL explicitly.' } }];\nconst headers = $json.headers ?? {};\nconst fresh = headers['set-cookie'] ?? headers['Set-Cookie'] ?? [];\nconst cookies = (Array.isArray(fresh) ? fresh : [fresh]).map(c => String(c).split(';')[0]).filter(Boolean).join('; ');\nreturn [{ json: { ...previous, OTP_VERIFY_URL: otpVerifyUrl, OTP_FIELD_NAME: otpField, sessionCookie: cookies || previous.sessionCookie, ok: true } }];"
+      },
+      "id": "a1f4bc1e-5f31-47d2-a965-000000000006",
+      "name": "Validate OTP Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -410,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.ok }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "a1f4bc1e-5f31-47d2-a965-000000000007",
+      "name": "OTP Request Succeeded?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -180,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $env.TELEGRAM_CHAT_ID }}",
+        "text": "=Supplier price update failed.\nReason:\n{{ $json.reason || 'OTP request failed' }}"
+      },
+      "id": "a1f4bc1e-5f31-47d2-a965-000000000008",
+      "name": "Telegram — OTP Request Failure",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        60,
+        300
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_WITH_TELEGRAM_CREDENTIAL_ID",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Data Table must be created once in n8n with these columns: id, supplier_name, product_name, product_code, price, stock, product_url, updated_at.\n// This node emits bounded pages; blank pages are discarded after extraction. Change MAX_PAGES for large catalogs.\nconst cfg = $json;\nreturn Array.from({ length: cfg.MAX_PAGES }, (_, index) => ({ json: { ...cfg, page: index + 1 } }));"
+      },
+      "id": "a1f4bc1e-5f31-47d2-a965-000000000009",
+      "name": "Generate Product List Pages",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        60,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "a1f4bc1e-5f31-47d2-a965-000000000010",
+      "name": "Paginate Until Empty Page",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        280,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.PRODUCT_LIST_URL + ($json.PRODUCT_LIST_URL.includes('?') ? '&' : '?') + 'page=' + $json.page }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Cookie",
+              "value": "={{ $json.sessionCookie }}"
+            }
+          ]
+        },
+        "options": {
+          "redirect": {
+            "followRedirects": true
+          }
+        }
+      },
+      "id": "a1f4bc1e-5f31-47d2-a965-000000000011",
+      "name": "GET Product List Page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        500,
+        60
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Configure supplier-specific data attributes/classes here once. This parser accepts common product-card markup.\nconst html = $json.body ?? $json.data ?? '';\nif (!html || /<title[^>]*>[^<]*(login|error|unavailable)/i.test(html)) throw new Error('Website unavailable, session expired, or page structure changed');\nconst decode = s => String(s ?? '').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/<[^>]+>/g, ' ').replace(/\\s+/g, ' ').trim();\nconst fa = '۰۱۲۳۴۵۶۷۸۹', ar = '٠١٢٣٤٥٦٧٨٩';\nconst normalize = value => decode(value).replace(/[٠-٩]/g, d => String(ar.indexOf(d))).replace(/[۰-۹]/g, d => String(fa.indexOf(d))).replace(/ي/g, 'ی').replace(/ك/g, 'ک');\nconst cards = html.match(/<(?:article|li|div)[^>]+(?:product-item|product-card|product)[^>]*>[\\s\\S]*?<\\/(?:article|li|div)>/gi) ?? [];\nconst cfg = $('Paginate Until Empty Page').first().json;\nconst rows = cards.map(card => {\n const field = name => card.match(new RegExp('(?:data-' + name + '|name=[\\\"']' + name + '[\\\"'])=[\\\"']([^\\\"']+)', 'i'))?.[1];\n const text = pattern => decode(card.match(pattern)?.[1]);\n const product_name = normalize(field('name') ?? text(/class=[\\\"'][^\\\"']*(?:product-title|product-name)[^\\\"']*[\\\"'][^>]*>([\\s\\S]*?)<\\//i));\n const product_code = normalize(field('sku') ?? field('code') ?? text(/(?:sku|product-code)[^>]*>([\\s\\S]*?)<\\//i));\n const rawPrice = normalize(field('price') ?? text(/(?:price|amount)[^>]*>([\\s\\S]*?)<\\//i));\n const price = Number(rawPrice.replace(/[^0-9.-]/g, ''));\n const stock = normalize(field('stock') ?? text(/(?:stock|availability)[^>]*>([\\s\\S]*?)<\\//i));\n const href = card.match(/<a[^>]+href=[\\\"']([^\\\"']+)/i)?.[1] ?? '';\n return { supplier_name: cfg.SUPPLIER_NAME, product_name, product_code, price: Number.isFinite(price) ? price : null, stock, product_url: href ? new URL(href, cfg.PRODUCT_LIST_URL).href : '', updated_at: new Date().toISOString() };\n}).filter(row => row.product_name && row.price !== null);\nif (!rows.length) return [];\nreturn rows.map(row => ({ json: row }));"
+      },
+      "id": "a1f4bc1e-5f31-47d2-a965-000000000012",
+      "name": "Extract and Normalize Persian Products",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        730,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "upsert",
+        "dataTableId": {
+          "__rl": true,
+          "value": "supplier_prices",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "supplier_name": "={{ $json.supplier_name }}",
+            "product_name": "={{ $json.product_name }}",
+            "product_code": "={{ $json.product_code }}",
+            "price": "={{ $json.price }}",
+            "stock": "={{ $json.stock }}",
+            "product_url": "={{ $json.product_url }}",
+            "updated_at": "={{ $json.updated_at }}"
+          },
+          "matchingColumns": [
+            "product_code"
+          ]
+        },
+        "options": {}
+      },
+      "id": "a1f4bc1e-5f31-47d2-a965-000000000013",
+      "name": "Upsert Product Code in supplier_prices",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1,
+      "position": [
+        980,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows = $input.all();\nreturn [{ json: { total_products_collected: rows.length, updated_products: rows.filter(({json}) => json.id).length, new_products: rows.filter(({json}) => !json.id).length, failed_products: 0, completed_at: new Date().toISOString() } }];"
+      },
+      "id": "a1f4bc1e-5f31-47d2-a965-000000000014",
+      "name": "Final Summary Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1220,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "resume": "form",
+        "formTitle": "Supplier OTP verification",
+        "formDescription": "Enter the one-time password sent to the supplier mobile number. The workflow will resume immediately.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "OTP code",
+              "fieldName": "otp",
+              "fieldType": "text",
+              "placeholder": "123456",
+              "requiredField": true
+            }
+          ]
+        }
+      },
+      "id": "a1f4bc1e-5f31-47d2-a965-000000000015",
+      "name": "Wait for Manual OTP Entry",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        60,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Validate OTP Request').first().json.OTP_VERIFY_URL }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Cookie",
+              "value": "={{ $('Validate OTP Request').first().json.sessionCookie }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/x-www-form-urlencoded"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "={{ $('Validate OTP Request').first().json.OTP_FIELD_NAME }}",
+              "value": "={{ $json.otp }}"
+            },
+            {
+              "name": "_token",
+              "value": "={{ $('Validate OTP Request').first().json.csrf }}"
+            }
+          ]
+        },
+        "options": {
+          "redirect": {
+            "followRedirects": true
+          }
+        }
+      },
+      "id": "a1f4bc1e-5f31-47d2-a965-000000000016",
+      "name": "POST Verify OTP",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        290,
+        60
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const html = String($json.body ?? $json.data ?? JSON.stringify($json));\nconst failed = /invalid (otp|code)|expired|incorrect code|verification failed/i.test(html);\nconst markers = ['logout', 'dashboard', 'account'];\nif (failed || !markers.some(marker => html.toLowerCase().includes(marker))) {\n  return [{ json: { ok: false, reason: failed ? 'OTP verification failed or the code expired' : 'OTP verification did not reach the authenticated dashboard' } }];\n}\nconst headers = $json.headers ?? {};\nconst fresh = headers['set-cookie'] ?? headers['Set-Cookie'] ?? [];\nconst cookies = (Array.isArray(fresh) ? fresh : [fresh]).map(c => String(c).split(';')[0]).filter(Boolean).join('; ');\nreturn [{ json: { ...$('Validate OTP Request').first().json, sessionCookie: cookies || $('Validate OTP Request').first().json.sessionCookie, ok: true } }];"
+      },
+      "id": "a1f4bc1e-5f31-47d2-a965-000000000017",
+      "name": "Validate OTP Login",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.ok }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "a1f4bc1e-5f31-47d2-a965-000000000018",
+      "name": "OTP Verification Succeeded?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        750,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $env.TELEGRAM_CHAT_ID }}",
+        "text": "=Supplier price update failed.\nReason:\n{{ $json.reason || 'OTP verification failed' }}"
+      },
+      "id": "a1f4bc1e-5f31-47d2-a965-000000000019",
+      "name": "Telegram — OTP Verification Failure",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        960,
+        220
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_WITH_TELEGRAM_CREDENTIAL_ID",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $env.TELEGRAM_CHAT_ID }}",
+        "text": "=Supplier OTP request was submitted, but this does not confirm that an SMS was sent.\nIf no SMS arrives, set OTP_REQUEST_URL, MOBILE_FIELD_NAME, and OTP_SENT_MARKER from the supplier browser Network request.\nOnly after receiving the SMS: open this n8n execution, open Wait for Manual OTP Entry, click Open form, and enter the code."
+      },
+      "id": "a1f4bc1e-5f31-47d2-a965-000000000020",
+      "name": "Telegram — OTP Entry Instructions",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -50,
+        -80
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "REPLACE_WITH_TELEGRAM_CREDENTIAL_ID",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ !!$json.SESSION_COOKIE }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "a1f4bc1e-5f31-47d2-a965-000000000021",
+      "name": "Use Existing Browser Session?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -1120,
+        20
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// SESSION_COOKIE must be a complete Cookie header value copied from an authenticated browser session.\n// Example: 'sessionid=abc; XSRF-TOKEN=xyz'. Do not paste it into workflow JSON.\nif (!$json.SESSION_COOKIE?.trim()) throw new Error('SESSION_COOKIE is empty');\nreturn [{ json: { ...$json, sessionCookie: $json.SESSION_COOKIE.trim(), authenticatedBy: 'browser-session' } }];"
+      },
+      "id": "a1f4bc1e-5f31-47d2-a965-000000000022",
+      "name": "Reuse Browser Session Cookie",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -880,
+        -80
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Daily 02:00 Schedule (editable)": {
+      "main": [
+        [
+          {
+            "node": "Configuration (environment variables)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Configuration (environment variables)": {
+      "main": [
+        [
+          {
+            "node": "Use Existing Browser Session?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GET Login Page (CSRF + cookies)": {
+      "main": [
+        [
+          {
+            "node": "Extract Optional CSRF and Session Cookie",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Optional CSRF and Session Cookie": {
+      "main": [
+        [
+          {
+            "node": "POST Request OTP (mobile number)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "POST Request OTP (mobile number)": {
+      "main": [
+        [
+          {
+            "node": "Validate OTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate OTP Request": {
+      "main": [
+        [
+          {
+            "node": "OTP Request Succeeded?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OTP Request Succeeded?": {
+      "main": [
+        [
+          {
+            "node": "Telegram — OTP Entry Instructions",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram — OTP Request Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait for Manual OTP Entry": {
+      "main": [
+        [
+          {
+            "node": "POST Verify OTP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "POST Verify OTP": {
+      "main": [
+        [
+          {
+            "node": "Validate OTP Login",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate OTP Login": {
+      "main": [
+        [
+          {
+            "node": "OTP Verification Succeeded?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OTP Verification Succeeded?": {
+      "main": [
+        [
+          {
+            "node": "Generate Product List Pages",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram — OTP Verification Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Product List Pages": {
+      "main": [
+        [
+          {
+            "node": "Paginate Until Empty Page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Paginate Until Empty Page": {
+      "main": [
+        [
+          {
+            "node": "GET Product List Page",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Final Summary Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GET Product List Page": {
+      "main": [
+        [
+          {
+            "node": "Extract and Normalize Persian Products",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract and Normalize Persian Products": {
+      "main": [
+        [
+          {
+            "node": "Upsert Product Code in supplier_prices",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert Product Code in supplier_prices": {
+      "main": [
+        [
+          {
+            "node": "Paginate Until Empty Page",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Final Summary Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram — OTP Entry Instructions": {
+      "main": [
+        [
+          {
+            "node": "Wait for Manual OTP Entry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Use Existing Browser Session?": {
+      "main": [
+        [
+          {
+            "node": "Reuse Browser Session Cookie",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "GET Login Page (CSRF + cookies)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reuse Browser Session Cookie": {
+      "main": [
+        [
+          {
+            "node": "Generate Product List Pages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "versionId": "a1f4bc1e-5f31-47d2-a965-000000000099",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}
